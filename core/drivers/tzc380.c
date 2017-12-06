@@ -31,6 +31,8 @@
 #include <drivers/tzc380.h>
 #include <io.h>
 #include <kernel/panic.h>
+#include <mm/core_memprot.h>
+#include <mm/core_mmu.h>
 #include <stddef.h>
 #include <trace.h>
 #include <util.h>
@@ -57,6 +59,11 @@ static uint32_t tzc_read_build_config(vaddr_t base)
 static void tzc_write_action(vaddr_t base, enum tzc_action action)
 {
 	write32(action, base + ACTION_OFF);
+}
+
+static uint32_t tzc_read_region_attributes(vaddr_t base, uint32_t region)
+{
+	return read32(base + REGION_ATTRIBUTES_OFF(region));
 }
 
 static void tzc_write_region_base_low(vaddr_t base, uint32_t region,
@@ -90,6 +97,38 @@ void tzc_init(vaddr_t base)
 			   BUILD_CONFIG_AW_MASK) + 1;
 	tzc.num_regions = ((tzc_build >> BUILD_CONFIG_NR_SHIFT) &
 			   BUILD_CONFIG_NR_MASK) + 1;
+}
+
+void tzc_security_inversion_en(vaddr_t base)
+{
+	write32(1, base + SECURITY_INV_EN_OFF);
+}
+
+void tzc_enable_region(uint8_t region)
+{
+	uint32_t val;
+
+	val = tzc_read_region_attributes(tzc.base, region);
+	val |= TZC_ATTR_REGION_EN_MASK;
+	tzc_write_region_attributes(tzc.base, region, val);
+}
+
+void tzc_fail_dump(void)
+{
+	vaddr_t base __maybe_unused = core_mmu_get_va(tzc.base,
+						      MEM_AREA_IO_SEC);
+
+	EMSG("Fail address Low %x\n", read32(base + 0x20));
+	EMSG("Fail address High %x\n", read32(base + 0x24));
+	EMSG("Fail Control %x\n", read32(base + 0x28));
+	EMSG("Fail Id %x\n", read32(base + 0x2C));
+}
+
+void tzc_int_clear(void)
+{
+	vaddr_t base = core_mmu_get_va(tzc.base, MEM_AREA_IO_SEC);
+
+	write32(0, base + INT_CLEAR);
 }
 
 static uint32_t addr_low(vaddr_t addr)
@@ -142,11 +181,6 @@ void tzc_set_action(enum tzc_action action)
 }
 
 #if TRACE_LEVEL >= TRACE_DEBUG
-
-static uint32_t tzc_read_region_attributes(vaddr_t base, uint32_t region)
-{
-	return read32(base + REGION_ATTRIBUTES_OFF(region));
-}
 
 static uint32_t tzc_read_region_base_low(vaddr_t base, uint32_t region)
 {
